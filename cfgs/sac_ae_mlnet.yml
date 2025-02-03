@@ -46,5 +46,5 @@ SAC:
   #latent_lambda: 0.01
   #latent_lambda: 0.1
   gpu_replay: true
-  optimizer: "adam"
-  #optimizer: "adamW"
+#  optimizer: "adam"
+  optimizer: "adamW"
