@@ -58,14 +58,14 @@ class SAC(object):
             # decoder
             self.decoder = StateDecoder(cfg.dim_latent, self.dim_state).to(device=self.device)
             # optimizer for critic encoder for reconstruction loss
-            if cfg.SAC.optimizer == 'adam':
+            if cfg.optimizer == 'adam':
                 self.encoder_optim = Adam(self.critic.state_encoder.parameters(), lr=cfg.lr)
                 self.decoder_optim = Adam(self.decoder.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-            elif cfg.SAC.optimizer == 'adamW':
+            elif cfg.optimizer == 'adamW':
                 self.encoder_optim = AdamW(self.critic.state_encoder.parameters(), lr=cfg.lr)
                 self.decoder_optim = AdamW(self.decoder.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
             else:
-                print('Wrong optimizer type: ', cfg.SAC.optimizer, 'choose either Adam or AdamW' )
+                print('Wrong optimizer type: ', cfg.optimizer, 'choose either Adam or AdamW' )
                 raise NotImplementedError
         self.latent_lambda = cfg.latent_lambda
         
