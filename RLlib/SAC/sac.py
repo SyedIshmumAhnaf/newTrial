@@ -248,18 +248,18 @@ class SAC(object):
         return log_pi
     def update_entropy(self, log_pi):
         if self.automatic_entropy_tuning:
-             alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
+            alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
 
             self.alpha_optim.zero_grad()
-             alpha_loss.backward()
+            alpha_loss.backward()
             # clip_grad_norm_(self.log_alpha, self.dim_action) # clip gradient of log_alpha
-             self.alpha_optim.step()
+            self.alpha_optim.step()
 
             #self.alpha = self.log_alpha.exp()
-             self.alpha = torch.clamp_min(self.log_alpha.exp(), 0.0001)
-             alpha_tlogs = self.alpha.clone()  # For TensorboardX logs
-            
-             self.losses.update({'alpha': alpha_loss.item()})
+            self.alpha = torch.clamp_min(self.log_alpha.exp(), 0.0001)
+            alpha_tlogs = self.alpha.clone()  # For TensorboardX logs
+        
+            self.losses.update({'alpha': alpha_loss.item()})
         else:
             alpha_tlogs = torch.tensor(self.alpha) # For TensorboardX logs
         return alpha_tlogs
