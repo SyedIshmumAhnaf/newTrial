@@ -1,8 +1,7 @@
 import os
 import torch
 import torch.nn.functional as F
-from torch.optim import Adam
-from torch.optim import AdamW # added AdamW
+from torch.optim import Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from .utils import soft_update, hard_update
 from .agents import AccidentPolicy, FixationPolicy, QNetwork, StateDecoder
@@ -32,8 +31,6 @@ class SAC(object):
         self.image_size = cfg.image_shape
         self.input_size = cfg.input_shape
         self.pure_sl = cfg.pure_sl if hasattr(cfg, 'pure_sl') else False
-        self.current_epoch = 0  #initializes current_epoch
-        self.total_epochs=0 #initializes total_epoch
 
         # state dims
         self.dim_state = cfg.dim_state
@@ -45,15 +42,14 @@ class SAC(object):
         self.dim_action = cfg.dim_action_acc + cfg.dim_action_fix
 
         # create actor and critics
-        self.policy_accident, self.policy_fixation, self.critic, self.critic_target, self.critic2, self.critic2_target = self.create_actor_critics(cfg)
+        self.policy_accident, self.policy_fixation, self.critic, self.critic_target, self.critic2, self.critic2_target = self.create_actor_critics(cfg) # Modified this line to include additional critics
         hard_update(self.critic_target, self.critic)
-        hard_update(self.critic2_target, self.critic2)
+        hard_update(self.critic2_target, self.critic2) # Added this line
 
         # optimizers
         self.critic_optim = Adam(self.critic.parameters(), lr=cfg.lr)
         self.policy_acc_optim = Adam(self.policy_accident.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
         self.policy_att_optim = Adam(self.policy_fixation.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-         
 
         if cfg.arch_type == 'rae':
             # the encoder is shared between two actors and critic, weights need to be tied
@@ -63,18 +59,15 @@ class SAC(object):
             self.decoder = StateDecoder(cfg.dim_latent, self.dim_state).to(device=self.device)
             # optimizer for critic encoder for reconstruction loss
             if cfg.SAC.optimizer == 'adam':
-                 self.encoder_optim = Adam(self.critic.state_encoder.parameters(), lr=cfg.lr)
-                 self.decoder_optim = Adam(self.decoder.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+                self.encoder_optim = Adam(self.critic.state_encoder.parameters(), lr=cfg.lr)
+                self.decoder_optim = Adam(self.decoder.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
             elif cfg.SAC.optimizer == 'adamW':
-                 self.encoder_optim = AdamW(self.critic.state_encoder.parameters(), lr=cfg.lr)
-                 self.decoder_optim = AdamW(self.decoder.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+                self.encoder_optim = AdamW(self.critic.state_encoder.parameters(), lr=cfg.lr)
+                self.decoder_optim = AdamW(self.decoder.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
             else:
-                  print('Wrong optimizer type: ', cfg.SAC.optimizer, 'choose either Adam or AdamW' )
-                  raise NotImplementedError
-
-
-            self.latent_lambda = cfg.latent_lambda
-
+                print('Wrong optimizer type: ', cfg.SAC.optimizer, 'choose either Adam or AdamW' )
+                raise NotImplementedError
+        self.latent_lambda = cfg.latent_lambda
         
         if self.automatic_entropy_tuning:
             # Target Entropy = −dim(A) (e.g. , -6 for HalfCheetah-v2) as given in the paper
@@ -94,12 +87,13 @@ class SAC(object):
             self.alpha = 0
             self.automatic_entropy_tuning = False
 
+
     def create_actor_critics(self, cfg):
         # create critic networks
         critic = QNetwork(self.dim_state, self.dim_action, cfg.hidden_size, dim_latent=cfg.dim_latent, arch_type=cfg.arch_type).to(device=self.device)
         critic_target = QNetwork(self.dim_state, self.dim_action, cfg.hidden_size, dim_latent=cfg.dim_latent, arch_type=cfg.arch_type).to(self.device)
-        critic2 = QNetwork(self.dim_state, self.dim_action, cfg.hidden_size, dim_latent=cfg.dim_latent, arch_type=cfg.arch_type).to(device=self.device)
-        critic2_target = QNetwork(self.dim_state, self.dim_action, cfg.hidden_size, dim_latent=cfg.dim_latent, arch_type=cfg.arch_type).to(self.device)
+        critic2 = QNetwork(self.dim_state, self.dim_action, cfg.hidden_size, dim_latent=cfg.dim_latent, arch_type=cfg.arch_type).to(device=self.device) #Added this line
+        critic2_target = QNetwork(self.dim_state, self.dim_action, cfg.hidden_size, dim_latent=cfg.dim_latent, arch_type=cfg.arch_type).to(self.device) #Added this line
         # create accident anticipation policy
         dim_state = self.dim_state if cfg.arch_type == 'rae' else self.dim_state_acc
         policy_accident = AccidentPolicy(dim_state, self.dim_action_acc, cfg.hidden_size, 
@@ -117,15 +111,15 @@ class SAC(object):
         self.policy_fixation.train(isTraining)
         self.critic.train(isTraining)
         self.critic_target.train(isTraining)
-        self.critic2.train(isTraining)  # added this for twin networks
-        self.critic2_target.train(isTraining)  #added this too
         if self.arch_type == 'rae':
-            self.decoder.train(isTraining)
+            self.decoder.train(isTraining) 
         if phase=='train':
-             self.status = True # boolean that represent if currently in training
+            self.status=True #true means it is training currently
         else:
-            self.status= False
+            self.status=False
 
+    def get_noise_scale(self, epoch, total_epochs): # Added this method
+        return max(0, 1.0 - epoch / total_epochs)
 
 
     def select_action(self, state, rnn_state=None, evaluate=False):
@@ -137,9 +131,9 @@ class SAC(object):
         fix_state = state.clone() if self.arch_type == 'rae' else state_avg
         
         if self.status:
-           noise_scale=self.get_noise_scale(self.current_epoch,self.total_epochs)
+            noise_scale = self.get_noise_scale(self.current_epoch,self.total_epochs)
         else:
-          noise_scale=0.0  # No exploration noise
+            noise_scale=0
         # execute actions
         if evaluate is False:
             action_acc, rnn_state, _, _ = self.policy_accident.sample(acc_state, rnn_state, noise_scale=noise_scale)
@@ -153,9 +147,7 @@ class SAC(object):
             rnn_state = (rnn_state[0].detach(), rnn_state[1].detach())
         return actions, rnn_state
 
-    def get_noise_scale(self, epoch, total_epochs):
-            return max(0, 1.0 - epoch / total_epochs)
-    
+
     def update_critic(self, state_batch, action_batch, reward_batch, next_state_batch, mask_batch, rnn_state_batch):
         with torch.no_grad():
             # split the next_states
@@ -169,14 +161,18 @@ class SAC(object):
             next_state_action = torch.cat([next_acc_state_action, next_fix_state_action], dim=1)
             # interence critics
             qf1_next_target, qf2_next_target = self.critic_target(next_state_batch, next_state_action)
-            qf1_next_target2, qf2_next_target2 = self.critic2_target(next_state_batch, next_state_action)
+            qf1_next_target2, qf2_next_target2 = self.critic2_target(next_state_batch, next_state_action) # Added this line
+
+            # Clipped Double Q-learning
             min_qf_next_target = torch.min(qf1_next_target, qf2_next_target)
             min_qf_next_target2 = torch.min(qf1_next_target2, qf2_next_target2)
             min_qf_both_target = torch.min(min_qf_next_target, min_qf_next_target2) - self.alpha * (next_acc_state_log_pi + next_fix_state_log_pi)
             next_q_value = reward_batch + (1 - mask_batch) * self.gamma * (min_qf_both_target)
+            
+            
         qf1, qf2 = self.critic(state_batch, action_batch)  # Two Q-functions to mitigate positive bias in the policy improvement step
         qf1_loss = F.mse_loss(qf1, next_q_value)  # JQ = 𝔼(st,at)~D[0.5(Q1(st,at) - r(st,at) - γ(𝔼st+1~p[V(st+1)]))^2]
-        qf2_2, _ = self.critic2(state_batch, action_batch)
+        qf2_2, _ = self.critic2(state_batch, action_batch) #Modified this line
         qf2_loss = F.mse_loss(qf2_2, next_q_value)  # JQ = 𝔼(st,at)~D[0.5(Q1(st,at) - r(st,at) - γ(𝔼st+1~p[V(st+1)]))^2]
         qf_loss = qf1_loss + qf2_loss
 
@@ -185,13 +181,14 @@ class SAC(object):
         self.critic_optim.step()
         self.losses.update({'critic': qf_loss.item()})
 
+
     def update_actor(self, state_batch, rnn_state_batch, labels_batch):
         # split the states
         state_max = state_batch[:, :self.dim_state_acc]
         state_avg = state_batch[:, self.dim_state_acc:]
         acc_state = state_batch.clone() if self.arch_type == 'rae' else state_max
         fix_state = state_batch.clone() if self.arch_type == 'rae' else state_avg
-            
+
         # sampling
         pi_acc, _, log_pi_acc, mean_acc = self.policy_accident.sample(acc_state, rnn_state_batch, detach=True)
         pi_fix, log_pi_fix, mean_fix = self.policy_fixation.sample(fix_state, detach=True)
@@ -204,8 +201,8 @@ class SAC(object):
         # actor loss
         actor_loss = ((self.alpha * log_pi) - min_qf_pi).mean() # Jπ = 𝔼st∼D,εt∼N[α * logπ(f(εt;st)|st) − Q(st,f(εt;st))]
         # actor_loss = - min_qf_pi.mean()
-            
-         # compute the early anticipation loss
+
+        # compute the early anticipation loss
         score_pred = 0.5 * (mean_acc + 1.0).squeeze(1)  # (B,)
         curtime_batch, clsID_batch, toa_batch, fix_batch = labels_batch[:, 0], labels_batch[:, 1], labels_batch[:, 2], labels_batch[:, 3:5]
         cls_target = torch.zeros(score_pred.size(0), self.num_classes).to(self.device)
@@ -218,51 +215,51 @@ class SAC(object):
         fix_pred = mean_fix[mask.bool()]
         fix_pred = scales_to_point(fix_pred, self.image_size, self.input_size)  # scaling scales to point
         fix_loss = torch.sum(torch.pow(norm_fix(fix_pred, self.input_size) - norm_fix(fix_gt, self.input_size), 2), dim=1).mean()  # (B) [0, sqrt(2)]
-           
-            
 
         if self.pure_sl:
             # for pure supervised learning, we just discard the losses from reinforcement learning
             acc_policy_loss = self.beta_accident * cls_loss
             fix_policy_loss = self.beta_fixation * fix_loss
         else:
-             # weighted sum
+            # weighted sum 
             acc_policy_loss = actor_loss.detach() + self.beta_accident * cls_loss
             fix_policy_loss = actor_loss.detach() + self.beta_fixation * fix_loss
         # update accident predictor
         self.policy_acc_optim.zero_grad()
         acc_policy_loss.backward()
         self.policy_acc_optim.step()
-         # update attention predictor
+        # update attention predictor
         self.policy_att_optim.zero_grad()
         fix_policy_loss.backward()
         self.policy_att_optim.step()
-           
 
         self.losses.update({'policy/total_accident': acc_policy_loss.item(),
-                           'policy/actor': actor_loss.item(),
+                            'policy/actor': actor_loss.item(),
                             'policy/accident': cls_loss.item(),
-                           'policy/total_fixation': fix_policy_loss.item(),
+                            'policy/total_fixation': fix_policy_loss.item(),
                             'policy/fixation': fix_loss.item()})
-
         return log_pi
+
+
     def update_entropy(self, log_pi):
         if self.automatic_entropy_tuning:
             alpha_loss = -(self.log_alpha * (log_pi + self.target_entropy).detach()).mean()
 
             self.alpha_optim.zero_grad()
             alpha_loss.backward()
-            # clip_grad_norm_(self.log_alpha, self.dim_action) # clip gradient of log_alpha
+            # clip_grad_norm_(self.log_alpha, self.dim_action)  # clip gradient of log_alpha
             self.alpha_optim.step()
 
-            #self.alpha = self.log_alpha.exp()
+            # self.alpha = self.log_alpha.exp()
             self.alpha = torch.clamp_min(self.log_alpha.exp(), 0.0001)
-            alpha_tlogs = self.alpha.clone()  # For TensorboardX logs
-        
+            alpha_tlogs = self.alpha.clone() # For TensorboardX logs
+
             self.losses.update({'alpha': alpha_loss.item()})
         else:
             alpha_tlogs = torch.tensor(self.alpha) # For TensorboardX logs
         return alpha_tlogs
+
+
     def update_decoder(self, state, latent_lambda=0.0):
         # encoder
         h = self.critic.state_encoder(state)
@@ -284,42 +281,39 @@ class SAC(object):
 
 
     def update_parameters(self, memory, updates):
-          
-        # sampling from replay buffer memory
+        # Sample from replay buffer
         state_batch, action_batch, reward_batch, next_state_batch, rnn_state_batch, labels_batch, mask_batch = memory.sample(self.batch_size, self.device)
-            
-        if not self.pure_sl:
-            # update critic networks
-             self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, mask_batch, rnn_state_batch)
-       
-           
-        # update actor and alpha
+
         alpha_values = self.alpha
-        if updates % self.actor_update_interval == 0:
-            log_pi = self.update_actor(state_batch, rnn_state_batch, labels_batch)
+        if not self.pure_sl:
+            alpha_values=None
+            # Update critics more frequently
+            self.update_critic(state_batch, action_batch, reward_batch, next_state_batch, mask_batch, rnn_state_batch)
 
-             # update entropy term
-            alpha_tlogs = self.update_entropy(log_pi)
-            alpha_values= alpha_tlogs.item()
+            # Update actor and alpha less frequently (delayed updates)
+            if updates % self.actor_update_interval == 0: #Update actor every 2 critic updates. Adjust as needed
+                log_pi = self.update_actor(state_batch, rnn_state_batch, labels_batch)
+                alpha_tlogs = self.update_entropy(log_pi)
+                alpha_values = alpha_tlogs.item()
 
-          # update critic target
-        if updates % self.target_update_interval == 0:
+            # Update target networks (less frequently than critics)
+            if updates % 5 == 0:  #Update targets every 5 critic updates. Adjust as needed.
                 soft_update(self.critic_target, self.critic, self.tau)
                 soft_update(self.critic2_target, self.critic2, self.tau)
 
-          # update decoder
-        if self.arch_type == 'rae':
-           self.update_decoder(state_batch, latent_lambda=self.latent_lambda)
-
+            # Update decoder (only for rae)
+            if self.arch_type == 'rae':
+                self.update_decoder(state_batch, latent_lambda=self.latent_lambda)
 
         return self.losses, alpha_values
 
 
     def save_models(self, ckpt_dir, cfg, epoch):
-         model_dict = {'policy_acc_model': self.policy_accident.state_dict(),
-                         'policy_fix_model': self.policy_fixation.state_dict(),
+        model_dict = {'policy_acc_model': self.policy_accident.state_dict(),
+                      'policy_fix_model': self.policy_fixation.state_dict(),
                       'configs': cfg}
-         torch.save(model_dict, os.path.join(ckpt_dir, 'sac_epoch_%02d.pt'%(epoch)))
+        torch.save(model_dict, os.path.join(ckpt_dir, 'sac_epoch_%02d.pt'%(epoch)))
+        
 
     def load_models(self, ckpt_dir, cfg):
         if cfg.test_epoch == -1:
